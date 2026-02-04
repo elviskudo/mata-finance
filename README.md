@@ -127,225 +127,175 @@ Email: admin@matafinance.com
 Password: admin123
 ```
 
-## API Documentation
+## 📚 API Reference (Swagger Style)
 
-Dokumentasi API lengkap dengan detail request dan response. Semua endpoint (kecuali Auth) memerlukan Header `Authorization: Bearer <token>`.
+Seluruh request (kecuali Auth) harus menyertakan header:
+`Authorization: Bearer <JWT_TOKEN>`
 
-### 🔐 Authentication (`/api/auth`)
+---
 
-Informasi login dan manajemen sesi.
+### 🔑 Module: Authentication (`/api/auth`)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/register` | Mendaftarkan pengguna baru (admin_finance / approval) |
+| `POST` | `/login` | Mengautentikasi pengguna & mendapatkan token |
+| `GET` | `/me` | Mendapatkan data profil pengguna yang sedang login |
+| `GET` | `/validate` | Validasi apakah sesi/token masih aktif |
+| `POST` | `/logout` | Mengakhiri sesi dan membuang token |
 
 #### `POST /api/auth/register`
-*   **Summary**: Register user baru (Admin Finance atau Approval)
-*   **Request Body**:
-    ```json
-    {
-      "email": "user@example.com",
-      "password": "password123",
-      "fullName": "John Doe",
-      "role": "admin_finance", // atau "approval"
-      "department": "Finance"
-    }
-    ```
-*   **Responses**:
-    *   `201`: User berhasil dibuat
-    *   `400`: Validation error / Email sudah terdaftar
+- **Request Body**:
+  ```json
+  {
+    "email": "string",
+    "password": "string (min 8)",
+    "fullName": "string",
+    "role": "admin_finance | approval",
+    "department": "string"
+  }
+  ```
+- **Responses**: `201 Created`, `400 Bad Request`
 
 #### `POST /api/auth/login`
-*   **Summary**: Login user
-*   **Request Body**:
-    ```json
-    {
-      "email": "user@example.com",
-      "password": "password123"
-    }
-    ```
-*   **Responses**:
-    *   `200`: Login berhasil, mengembalikan token JWT dan data anonim
-    *   `401`: Email atau password salah
-
-#### `GET /api/auth/me`
-*   **Summary**: Ambil profil user saat ini (anonim)
-*   **Responses**:
-    *   `200`: Mengembalikan `loginId`, `publicAlias`, `role`, dan `department`
-
-#### `GET /api/auth/validate`
-*   **Summary**: Validasi sesi dan token
-*   **Responses**:
-    *   `200`: Sesi valid
+- **Request Body**:
+  ```json
+  { "email": "string", "password": "string" }
+  ```
+- **Responses**: `200 OK` (returns token), `401 Unauthorized`
 
 ---
 
-### 📊 Dashboard (`/api/dashboard`)
+### 📊 Module: Dashboard (`/api/dashboard`)
 
-Data ringkasan untuk halaman beranda.
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/summary` | Ringkasan statistik performa kerja pribadi |
+| `GET` | `/activity` | Daftar log aktivitas atau history tindakan user |
+| `GET` | `/company-data` | Data keuangan konsolidasi (Hanya untuk simulasi 403) |
 
 #### `GET /api/dashboard/summary`
-*   **Summary**: Ambil ringkasan beranda (hanya data pribadi)
-*   **Responses**:
-    *   `200`: Ringkasan transaksi hari ini, draft aktif, pending, revisi, peringatan SLA, dan aktivitas terbaru.
-
-#### `GET /api/dashboard/activity`
-*   **Summary**: Ambil log aktivitas pribadi
-*   **Parameters**:
-    *   `limit` (query): Jumlah maksimal data (default: 20)
-    *   `offset` (query): Offset untuk pagination
-*   **Responses**:
-    *   `200`: Daftar aktivitas terbaru
-
-#### `GET /api/dashboard/company-data`
-*   **Summary**: Akses data keuangan perusahaan (Simulasi pembatasan)
-*   **Responses**:
-    *   `403`: Akses ditolak (Admin Finance tidak diizinkan)
+- **Security**: Guard Personal Data (Hanya data milik user sendiri)
+- **Response**:
+  ```json
+  {
+    "today": { "transactionsCount": 5, "date": "2024-03-24" },
+    "drafts": { "activeCount": 2 },
+    "pending": { "count": 1 },
+    "revisions": { "count": 1 },
+    "slaWarnings": [],
+    "alerts": [],
+    "recentTransactions": []
+  }
+  ```
 
 ---
 
-### 💸 Transactions (`/api/transactions`)
+### 💸 Module: Transactions (`/api/transactions`)
 
-Manajemen transaksi, workflow input, dan revisi.
+Manajemen siklus hidup transaksi dari Draft hingga Approved.
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/` | List transaksi pribadi (dengan filter) |
+| `GET` | `/entry-hub` | Ringkasan cepat untuk menu Input Transaksi |
+| `POST` | `/init` | **Step 1**: Inisialisasi ID dan Tipe Transaksi |
+| `PUT` | `/:id/header` | **Step 2**: Simpan data vendor, tanggal, dan nilai |
+| `POST` | `/:id/items` | **Step 3**: Simpan rincian item (multi-item) |
+| `POST` | `/:id/upload` | **Step 4**: Upload bukti fisik & Trigger OCR |
+| `GET` | `/:id/pre-check` | **Step 5**: Jalankan validasi silang (OCR vs Input) |
+| `POST` | `/:id/submit` | Finalisasi & Kirim ke Approval Queue |
+| `GET` | `/:id` | Mendapatkan detail lengkap satu transaksi |
+| `GET` | `/:id/timeline` | Melihat sejarah status dan aktivitas transaksi |
+| `PUT` | `/:id/draft` | Simpan sebagai draft (tidak terkunci) |
 
 #### `GET /api/transactions`
-*   **Summary**: Ambil daftar transaksi pribadi
-*   **Parameters**:
-    *   `status` (query): Filter berdasarkan status (contoh: `draft,returned`)
-    *   `type` (query): Filter berdasarkan tipe transaksi
-*   **Responses**:
-    *   `200`: Daftar transaksi dengan metadata pagination
+- **Query Params**:
+  - `status`: Filter status (e.g. `draft,returned,submitted`)
+  - `type`: Filter tipe (e.g. `payment,expense`)
+  - `limit`: Default 20
+  - `offset`: Default 0
 
-#### `POST /api/transactions/init`
-*   **Summary**: Inisialisasi transaksi baru (Step 1)
-*   **Request Body**:
-    ```json
-    {
-      "transactionType": "payment" // payment, expense, general
-    }
-    ```
-*   **Responses**:
-    *   `201`: Transaksi diinisialisasi, mengembalikan `id` dan `transaction_code`
-
-#### `PUT /api/transactions/{id}/header`
-*   **Summary**: Simpan data utama (header) transaksi (Step 2)
-*   **Request Body**:
-    ```json
-    {
-      "vendorName": "PT Contoh",
-      "invoiceDate": "2024-03-20",
-      "invoiceNumber": "INV-001",
-      "amount": 1500000,
-      "currency": "IDR",
-      "description": "Pembayaran sewa"
-    }
-    ```
-
-#### `POST /api/transactions/{id}/items`
-*   **Summary**: Simpan item-item transaksi (Step 3)
-*   **Request Body**:
-    ```json
-    {
-      "items": [
-        {
-          "description": "Item 1",
-          "quantity": 2,
-          "price": 500000,
-          "accountCode": "GL001"
-        }
-      ]
-    }
-    ```
-
-#### `POST /api/transactions/{id}/upload`
-*   **Summary**: Upload dokumen & Jalankan OCR (Step 4)
-*   **Request Body**: `multipart/form-data` dengan field `document` (file)
-*   **Responses**:
-    *   `200`: File diproses, mengembalikan hasil OCR
-
-#### `POST /api/transactions/{id}/submit`
-*   **Summary**: Kirim transaksi untuk approval
-*   **Request Body**:
-    ```json
-    {
-      "notes": "Keperluan mendesak",
-      "isEmergency": false,
-      "emergencyReason": ""
-    }
-    ```
-*   **Responses**:
-    *   `200`: Berhasil disubmit atau ditahan (Exception Case dibuat jika OCR tidak cocok)
-
-#### `GET /api/transactions/{id}/timeline`
-*   **Summary**: Ambil timeline aktivitas transaksi
-*   **Responses**:
-    *   `200`: Daftar event (Created, Submitted, Approved, dll)
+#### `POST /api/transactions/:id/submit`
+- **Request Body**:
+  ```json
+  {
+    "notes": "string",
+    "isEmergency": "boolean",
+    "emergencyReason": "string (required if emergency is true)"
+  }
+  ```
+- **Responses**: `200 OK` (Submitted), `200 OK` (Exception Created if OCR Mismatch)
 
 ---
 
-### 🔔 Alerts (`/api/alerts`)
+### ⚙️ Module: Revision Workflow
 
-Sistem notifikasi dan peringatan personal.
+Khusus untuk menangani transaksi yang dikembalikan (`returned`) untuk diperbaiki.
 
-#### `GET /api/alerts`
-*   **Summary**: Ambil peringatan personal
-*   **Parameters**:
-    *   `unreadOnly` (query): `true` untuk hanya yang belum dibaca
-*   **Responses**:
-    *   `200`: Daftar notifikasi/peringatan
-
-#### `POST /api/alerts/{id}/read`
-*   **Summary**: Tandai peringatan sebagai sudah dibaca
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/:id/revision-details` | Detail perbandingan data salah vs instruksi approver |
+| `PUT` | `/:id/save-revision` | Menyimpan perubahan pada kolom yang di-allow saja |
+| `POST` | `/:id/resubmit` | Mengirim kembali setelah diperbaiki |
+| `GET` | `/:id/revision-status` | Cek sisa waktu deadline revisi (SLA) |
 
 ---
 
-### ⚖️ Exceptions (`/api/exceptions`)
+### ⚖️ Module: Exceptions (`/api/exceptions`)
 
-Penanganan ketidakcocokan data OCR.
+Penanganan data yang tidak terbaca OCR atau tidak cocok secara sistem.
 
-#### `GET /api/exceptions`
-*   **Summary**: Ambil daftar exception cases milik user
-#### `PUT /api/exceptions/{caseId}/patch`
-*   **Summary**: Berikan overlay data manual untuk memperbaiki error OCR
-
----
-
-### ❓ Help (`/api/help`)
-
-Akses bantuan dan SOP kontekstual.
-
-#### `GET /api/help/sop`
-*   **Summary**: Ambil SOP kontekstual berdasarkan context
-*   **Parameters**:
-    *   `contextType` (query): Tipe konteks (contoh: `transaction_type`)
-    *   `contextCode` (query): Kode konteks (contoh: `payment`)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/` | Daftar kasus exception yang perlu ditangani user |
+| `GET` | `/:caseId` | Detail ketidakcocokan data OCR |
+| `PUT` | `/:caseId/patch` | Input data manual sebagai overlay koreksi |
+| `POST` | `/:caseId/recheck` | Jalankan ulang validasi dengan overlay data baru |
 
 ---
 
-### 🛡️ Approval (`/api/approval`)
+### 🛡️ Module: Approval Workflow (`/api/approval`)
 
-Endpoints khusus untuk role `approval`.
+Endpoint khusus untuk pengguna dengan role `approval`.
 
-#### `GET /api/approval/queue`
-*   **Summary**: Ambil antrean transaksi yang menunggu approval
-*   **Description**: Menggunakan *Exception-Aware Routing* (masking data sensitif)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/home-context` | Summary beban kerja approver |
+| `GET` | `/stats` | Statistik persentase approval & kecepatan proses |
+| `GET` | `/queue` | Antrean transaksi (Masked Data - No Vendor/Name) |
+| `GET` | `/transactions/:id` | Review detail transaksi |
+| `POST` | `/transactions/:id/approve` | Menyetujui transaksi |
+| `POST` | `/transactions/:id/reject` | Mengembalikan transaksi ke admin (Return) |
+| `GET` | `/emergency-list` | Daftar permintaan darurat yang perlu diprioritaskan |
 
-#### `POST /api/approval/transactions/{id}/approve`
-*   **Summary**: Setujui transaksi
+---
 
-#### `POST /api/approval/transactions/{id}/reject`
-*   **Summary**: Kembalikan transaksi untuk revisi (Status: `returned`)
+### 🔔 Module: Alerts & SOP (`/api/alerts` & `/api/help`)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/alerts` | Daftar notifikasi personal user |
+| `POST` | `/api/alerts/:id/read` | Menandai satu notifikasi sebagai dibaca |
+| `POST` | `/api/alerts/read-all` | Menandai semua notifikasi sebagai dibaca |
+| `GET` | `/api/alerts/count` | Mendapatkan jumlah unread (normal & critical) |
+| `GET` | `/api/help/sop` | SOP berdasarkan konteks (e.g. `payment`) |
 
 ---
 
 ## Sesuai Diagram Sequence
 
-1. ✅ Validasi sesi & peran pengguna (JWT Middleware)
-2. ✅ Pembatasan akses hanya data pribadi (guardPersonalData)
-3. ✅ Hitung transaksi hari ini berdasarkan userId
-4. ✅ Hitung draft aktif (tidak termasuk yang kedaluwarsa)
-5. ✅ Hitung transaksi menunggu proses (submitted/under_review)
-6. ✅ Peringatan SLA mendekati batas waktu
-7. ✅ Peringatan personal (draft hampir habis, revisi tertunda)
-8. ✅ Ringkasan aktivitas pribadi
-9. ✅ Sanitasi data terlarang (kas perusahaan, laporan laba rugi, admin lain)
-10. ✅ Akses terlarang menampilkan pesan pembatasan (403 Forbidden)
+Implementasi backend telah mengikuti 10 poin utama dalam diagram sequence:
+1. ✅ **Sesi & Role**: Validasi via JWT Middleware.
+2. ✅ **Guard Personal**: Filter data otomatis berdasarkan `userId`.
+3. ✅ **Statistik Harian**: Kalkulasi dinamis transaksi hari ini.
+4. ✅ **Draft Management**: Filter draft aktif vs expired.
+5. ✅ **Queue Status**: Monitoring transaksi dalam proses review.
+6. ✅ **SLA Monitoring**: Peringatan otomatis mendekati batas waktu.
+7. ✅ **Personal Alerts**: Notifikasi input salah (revisi) atau deadline.
+8. ✅ **Activity Logs**: Pencatatan setiap tindakan user.
+9. ✅ **Data Sanitization**: Menghilangkan data sensitif perusahaan.
+10. ✅ **Forbidden Access**: Implementasi 403 untuk akses ilegal ke keuangan perusahaan.
 
 ## License
 
