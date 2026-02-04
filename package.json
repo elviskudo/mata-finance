@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "string-similarity": "^4.0.4",
+    "tesseract.js": "^7.0.0"
+  }
+}

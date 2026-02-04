@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mata_finance_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: mata_finance_secret_2024
+      POSTGRES_DB: mata_finance
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d mata_finance"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      mata_finance_network:
+
+  backend:
+    build: ./backend
+    container_name: mata_finance_backend
+    restart: always
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - DATABASE_URL=postgresql://admin:mata_finance_secret_2024@postgres:5432/mata_finance
+      - JWT_SECRET=mata_finance_jwt_secret
+      - NODE_ENV=development
+    volumes:
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mata_finance_network
+
+  frontend:
+    build: ./frontend
+    container_name: mata_finance_frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001/api
+    depends_on:
+      - backend
+    networks:
+      - mata_finance_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: mata_finance_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin12345
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      mata_finance_network:
+
+volumes:
+  postgres_data:
+
+networks:
+  mata_finance_network:
+    driver: bridge
