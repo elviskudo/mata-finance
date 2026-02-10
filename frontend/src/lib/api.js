@@ -82,6 +82,10 @@ export const transactionAPI = {
 
   // Timeline API
   getTimeline: (id) => api.get(`/transactions/${id}/timeline`),
+
+  // Replacement Flow
+  getPendingReplacements: () => api.get('/transactions/pending-replacements'),
+  createReplacement: (id) => api.post(`/transactions/${id}/create-replacement`),
 };
 
 // Exception API
@@ -112,8 +116,11 @@ export const approvalAPI = {
   getQueue: (params) => api.get('/approval/queue', { params }),
   getTransaction: (id) => api.get(`/approval/transactions/${id}`),
   approve: (id, notes) => api.post(`/approval/transactions/${id}/approve`, { notes }),
-  reject: (id, reason) => api.post(`/approval/transactions/${id}/reject`, { reason }),
+  reject: (id, data) => api.post(`/approval/transactions/${id}/reject`, typeof data === 'string' ? { reason: data } : data),
+  clarify: (id, reason) => api.post(`/approval/transactions/${id}/clarify`, { reason }),
   getEmergencyList: () => api.get('/approval/emergency-list'),
+  getSystemNotices: () => api.get('/approval/notices'),
+  getMyDecisions: () => api.get('/approval/my-decisions'),
 };
 
 export default api;

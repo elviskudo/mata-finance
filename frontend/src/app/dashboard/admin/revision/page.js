@@ -21,9 +21,11 @@ import {
   XCircle,
 } from 'lucide-react';
 import { transactionAPI } from '@/lib/api';
+import { useAlertModal } from '@/components/AlertModal';
 
 export default function RevisionPage() {
   const router = useRouter();
+  const alertModal = useAlertModal();
 
   const [loading, setLoading] = useState(true);
   const [revisions, setRevisions] = useState([]);
@@ -101,7 +103,7 @@ export default function RevisionPage() {
       }
     } catch (error) {
       console.error('Error fetching revision details:', error);
-      alert(error.response?.data?.message || 'Gagal memuat detail revisi');
+      alertModal.error(error.response?.data?.message || 'Gagal memuat detail revisi');
       setSelectedRevision(null);
     } finally {
       setLoadingDetails(false);
@@ -190,7 +192,7 @@ export default function RevisionPage() {
   // Handle save revision
   const handleSaveRevision = async () => {
     if (countdown?.expired) {
-      alert('Deadline telah terlewati. Anda tidak dapat menyimpan perubahan.');
+      alertModal.warning('Deadline telah terlewati. Anda tidak dapat menyimpan perubahan.');
       return;
     }
 
@@ -223,13 +225,13 @@ export default function RevisionPage() {
       const response = await transactionAPI.saveRevision(selectedRevision.id, changes);
 
       if (response?.data?.success) {
-        alert('Revisi berhasil disimpan');
+        alertModal.success('Revisi berhasil disimpan');
         // Refresh details
         await fetchRevisionDetails(selectedRevision.id);
       }
     } catch (error) {
       console.error('Save revision error:', error);
-      alert(error.response?.data?.message || 'Gagal menyimpan revisi');
+      alertModal.error(error.response?.data?.message || 'Gagal menyimpan revisi');
     } finally {
       setSaving(false);
     }
@@ -238,11 +240,12 @@ export default function RevisionPage() {
   // Handle resubmit
   const handleResubmit = async () => {
     if (countdown?.expired) {
-      alert('Deadline telah terlewati. Anda tidak dapat mengirim ulang transaksi.');
+      alertModal.warning('Deadline telah terlewati. Anda tidak dapat mengirim ulang transaksi.');
       return;
     }
 
-    if (!confirm('Apakah Anda yakin ingin mengirim ulang transaksi ini? Transaksi akan dikunci dan masuk ke antrian approval.')) {
+    const confirmed = await alertModal.confirm('Apakah Anda yakin ingin mengirim ulang transaksi ini? Transaksi akan dikunci dan masuk ke antrian approval.', 'Konfirmasi Kirim Ulang');
+    if (!confirmed) {
       return;
     }
 
@@ -252,13 +255,13 @@ export default function RevisionPage() {
       const response = await transactionAPI.resubmit(selectedRevision.id, { notes: resubmitNotes });
 
       if (response?.data?.success) {
-        alert('Transaksi berhasil dikirim ulang');
+        alertModal.success('Transaksi berhasil dikirim ulang');
         closeModal();
         fetchRevisions();
       }
     } catch (error) {
       console.error('Resubmit error:', error);
-      alert(error.response?.data?.message || 'Gagal mengirim ulang transaksi');
+      alertModal.error(error.response?.data?.message || 'Gagal mengirim ulang transaksi');
     } finally {
       setResubmitting(false);
     }

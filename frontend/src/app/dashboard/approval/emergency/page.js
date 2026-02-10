@@ -15,16 +15,21 @@ import {
   CheckCircle,
   XCircle,
   MessageSquare,
-  User
+  User,
+  RefreshCw
 } from 'lucide-react';
 import { approvalAPI } from '@/lib/api';
+import { useAlertModal } from '@/components/AlertModal';
 
 export default function EmergencyRequestsPage() {
   const router = useRouter();
+  const alertModal = useAlertModal();
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
   const [error, setError] = useState('');
   const [processing, setProcessing] = useState(null); // stores item id being processed
+  const [rejectItem, setRejectItem] = useState(null); // item being rejected
+  const [rejectReason, setRejectReason] = useState('');
 
   useEffect(() => {
     fetchEmergencyRequests();
@@ -46,44 +51,70 @@ export default function EmergencyRequestsPage() {
   };
 
   const handleQuickApprove = async (id) => {
-    if (!confirm('Apakah Anda yakin ingin menyetujui transaksi ini segera?')) return;
+    const confirmed = await alertModal.confirm('Apakah Anda yakin ingin menyetujui transaksi ini segera?', 'Konfirmasi Approve');
+    if (!confirmed) return;
     try {
       setProcessing(id);
       await approvalAPI.approve(id, '[QUICK APPROVAL] Approved via Emergency Menu');
       setItems(items.filter(item => item.id !== id));
     } catch (err) {
-      alert('Gagal menyetujui: ' + (err.response?.data?.message || err.message));
+      alertModal.error('Gagal menyetujui: ' + (err.response?.data?.message || err.message));
     } finally {
       setProcessing(null);
     }
   };
 
-  const handleQuickReject = async (id) => {
-    const reason = prompt('Alasan Penolakan (min 10 karakter):');
-    if (!reason || reason.length < 10) {
-      if (reason) alert('Alasan terlalu pendek');
+  const handleQuickReject = (item) => {
+    setRejectItem(item);
+    setRejectReason('');
+  };
+
+  const submitReject = async (rejectionType) => {
+    if (!rejectReason || rejectReason.length < 10) {
+      alertModal.warning('Alasan penolakan minimal 10 karakter');
       return;
     }
+
     try {
+      const id = rejectItem.id;
       setProcessing(id);
-      await approvalAPI.reject(id, reason);
+      await approvalAPI.reject(id, { 
+        reason: rejectReason, 
+        rejectionType 
+      });
       setItems(items.filter(item => item.id !== id));
+      setRejectItem(null);
+      
+      if (rejectionType === 'request_new') {
+        alertModal.success('Reject & Buat Baru: Admin disuruh buat transaksi baru yang serupa.');
+      } else {
+        alertModal.success('Reject & Tutup: Transaksi di-reject dan tidak perlu buat baru.');
+      }
     } catch (err) {
-      alert('Gagal menolak: ' + (err.response?.data?.message || err.message));
+      alertModal.error('Gagal menolak: ' + (err.response?.data?.message || err.message));
     } finally {
       setProcessing(null);
     }
   };
 
   const handleQuickClarify = async (id) => {
-    const defaultClarify = 'Mohon klarifikasi tujuan pembayaran dan urgensi transaksi ini.';
-    if (!confirm('Kirim permintaan klarifikasi standar?')) return;
+    const reason = await alertModal.prompt(
+      'Transaksi akan dikembalikan ke Admin untuk direvisi dan dapat disubmit ulang.\n\nMasukkan catatan klarifikasi (min 10 karakter):', 
+      'Minta Revisi', 
+      { placeholder: 'Jelaskan apa yang perlu diperbaiki...' }
+    );
+    if (!reason || reason.length < 10) {
+      if (reason) alertModal.warning('Catatan terlalu pendek');
+      return;
+    }
     try {
       setProcessing(id);
-      await approvalAPI.reject(id, `[Clarification Required] ${defaultClarify}`);
+      // Use clarify endpoint - returns to admin for revision
+      await approvalAPI.clarify(id, reason);
       setItems(items.filter(item => item.id !== id));
+      alertModal.success('Transaksi dikembalikan ke Admin untuk direvisi.');
     } catch (err) {
-      alert('Gagal meminta klarifikasi: ' + (err.response?.data?.message || err.message));
+      alertModal.error('Gagal meminta klarifikasi: ' + (err.response?.data?.message || err.message));
     } finally {
       setProcessing(null);
     }
@@ -209,21 +240,21 @@ export default function EmergencyRequestsPage() {
                   </button>
                   
                   <button
-                    onClick={() => handleQuickReject(item.id)}
+                    onClick={() => handleQuickClarify(item.id)}
                     disabled={processing === item.id}
-                    className="p-2.5 rounded-xl bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors border border-rose-500/20"
-                    title="Reject"
+                    className="p-2.5 rounded-xl bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-colors border border-amber-500/20"
+                    title="Minta Revisi"
                   >
-                    <XCircle className="w-5 h-5" />
+                    <MessageSquare className="w-5 h-5" />
                   </button>
 
                   <button
-                    onClick={() => handleQuickClarify(item.id)}
+                    onClick={() => handleQuickReject(item)}
                     disabled={processing === item.id}
-                    className="p-2.5 rounded-xl bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors border border-blue-500/20"
-                    title="Request Clarification"
+                    className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors border border-rose-500/20"
+                    title="Tolak Transaksi"
                   >
-                    <MessageSquare className="w-5 h-5" />
+                    <XCircle className="w-5 h-5" />
                   </button>
 
                   <Link 
@@ -263,6 +294,67 @@ export default function EmergencyRequestsPage() {
           Detail krusial tetap ditampilkan dalam mode Review untuk menghindari kesalahan verifikasi.
         </p>
       </div>
+
+      {/* Quick Reject Modal */}
+      {rejectItem && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-dark-950/90 backdrop-blur-md animate-fade-in">
+          <div className="glass-card p-6 w-full max-w-lg animate-slide-up border-rose-500/30">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-rose-500/20 rounded-lg">
+                <XCircle className="w-5 h-5 text-rose-400" />
+              </div>
+              <h3 className="text-xl font-bold text-dark-100">Tolak: {rejectItem.job_type}</h3>
+            </div>
+
+            <p className="text-dark-400 mb-4 text-sm">
+              Berikan alasan penolakan untuk transaksi senilai <span className="text-amber-400 font-bold">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(rejectItem.amount)}</span>.
+            </p>
+
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Masukkan alasan penolakan (min 10 karakter)..."
+              className="input-field w-full h-32 resize-none mb-6 border-rose-500/20 focus:border-rose-500/50"
+              autoFocus
+            />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <button
+                onClick={() => submitReject('request_new')}
+                disabled={processing === rejectItem.id || rejectReason.length < 10}
+                className="flex flex-col items-center justify-center p-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-xl transition-all group disabled:opacity-50"
+              >
+                <div className="p-2 rounded-full bg-amber-500/20 mb-2 group-hover:scale-110 transition-transform">
+                  <RefreshCw className="w-5 h-5 text-amber-500" />
+                </div>
+                <span className="text-sm font-bold text-amber-400">Reject & Buat Baru</span>
+                <span className="text-[10px] text-amber-500/60 text-center mt-1">Admin disuruh buat transaksi baru yang serupa</span>
+              </button>
+
+              <button
+                onClick={() => submitReject('permanent')}
+                disabled={processing === rejectItem.id || rejectReason.length < 10}
+                className="flex flex-col items-center justify-center p-4 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-xl transition-all group disabled:opacity-50"
+              >
+                <div className="p-2 rounded-full bg-rose-500/20 mb-2 group-hover:scale-110 transition-transform">
+                  <XCircle className="w-5 h-5 text-rose-400" />
+                </div>
+                <span className="text-sm font-bold text-rose-400">Reject & Tutup</span>
+                <span className="text-[10px] text-rose-500/60 text-center mt-1">Setelah di-reject admin tidak perlu buat baru</span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setRejectItem(null)}
+              className="w-full mt-4 py-2 text-dark-500 hover:text-dark-300 text-sm transition-colors font-medium underline underline-offset-4"
+            >
+              Batal
+            </button>
+          </div>
+        </div>
+      )}
+      
     </div>
   );
 }
+

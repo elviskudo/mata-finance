@@ -14,6 +14,8 @@ import exceptionRoutes from './routes/exception.routes.js';
 import alertRoutes from './routes/alert.routes.js';
 import helpRoutes from './routes/help.routes.js';
 import approvalRoutes from './routes/approval.routes.js';
+import systemNoticeRoutes from './routes/systemNotice.routes.js';
+import decisionRoutes from './routes/decision.routes.js';
 
 
 // Import scripts
@@ -88,6 +90,8 @@ app.use('/api/exceptions', exceptionRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/help', helpRoutes);
 app.use('/api/approval', approvalRoutes);
+app.use('/api/approval/notices', systemNoticeRoutes);
+app.use('/api/approval', decisionRoutes);
 
 app.use('/uploads', express.static('uploads'));
 

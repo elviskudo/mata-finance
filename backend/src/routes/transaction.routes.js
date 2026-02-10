@@ -130,6 +130,160 @@ router.get('/entry-hub', authenticateToken, guardPersonalData, async (req, res) 
   }
 });
 
+// --- 0.5. PENDING REPLACEMENTS - Transactions needing new submission ---
+router.get('/pending-replacements', authenticateToken, guardPersonalData, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Get transactions marked as rejected with 'request_new' that haven't been replaced
+    const result = await query(
+      `SELECT id, transaction_code, transaction_type, amount, currency, reject_reason, updated_at
+       FROM transactions 
+       WHERE user_id = $1 
+       AND status = 'rejected' 
+       AND internal_flags->>'rejection_type' = 'request_new'
+       AND internal_flags->>'replacement_status' = 'pending'
+       ORDER BY updated_at DESC`,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      data: result.rows.map(r => ({
+        id: r.id,
+        code: r.transaction_code,
+        type: r.transaction_type,
+        amount: parseFloat(r.amount),
+        currency: r.currency,
+        reason: r.reject_reason,
+        updatedAt: r.updated_at
+      }))
+    });
+  } catch (error) {
+    console.error('Pending replacements error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// --- 0.6. CREATE REPLACEMENT - Create BLANK replacement for rejected transaction ---
+router.post('/:id/create-replacement', authenticateToken, guardPersonalData, async (req, res) => {
+  try {
+    const { id: oldId } = req.params;
+    const userId = req.user.id;
+
+    // 1. Get old transaction (only to verify it exists and is eligible)
+    const oldTxRes = await query(
+      `SELECT transaction_type, transaction_code FROM transactions 
+       WHERE id = $1 AND user_id = $2 AND status = 'rejected' 
+       AND internal_flags->>'rejection_type' = 'request_new'`,
+      [oldId, userId]
+    );
+
+    if (oldTxRes.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Source transaction not found or not eligible for replacement' 
+      });
+    }
+
+    const oldTx = oldTxRes.rows[0];
+
+    // 2. Create BLANK transaction stub (DO NOT COPY DATA - old data was wrong!)
+    // Only copy the transaction TYPE, everything else is blank
+    const newId = uuidv4();
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const newCode = `TRX-${dateStr}-${randomStr}-REP`;
+
+    // Internal flags: mark as replacement but DON'T copy old data
+    const internalFlags = {
+      isReplacement: true,
+      replacedTransactionId: oldId,
+      replacedTransactionCode: oldTx.transaction_code,
+      replacementReason: 'Original transaction was rejected - creating fresh replacement'
+    };
+
+    // Insert BLANK transaction with only basic required fields
+    await query(
+      `INSERT INTO transactions 
+       (id, user_id, transaction_type, transaction_code, amount, currency, status, internal_flags, created_at)
+       VALUES ($1, $2, $3, $4, 0, 'IDR', 'in_progress', $5, CURRENT_TIMESTAMP)`,
+      [newId, userId, oldTx.transaction_type, newCode, JSON.stringify(internalFlags)]
+    );
+
+    // 3. NO CLONING OF ITEMS - admin must re-enter everything from scratch
+    // This ensures they don't accidentally resubmit the same wrong data
+
+    // 4. Update old transaction replacement status
+    await query(
+      `UPDATE transactions 
+       SET internal_flags = jsonb_set(internal_flags, '{replacement_status}', '"processing"')
+       WHERE id = $1`,
+      [oldId]
+    );
+
+    auditService.logActivity(userId, 'CREATE_REPLACEMENT', 'transaction', newId, { 
+      sourceTxId: oldId,
+      note: 'Created blank replacement - admin must re-enter all data'
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Blank replacement transaction created. Please fill in all details from scratch.',
+      data: {
+        id: newId,
+        code: newCode,
+        status: 'in_progress',
+        type: oldTx.transaction_type,
+        note: 'This is a fresh start - no data copied from rejected transaction'
+      }
+    });
+  } catch (error) {
+    console.error('Create replacement error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// --- Helper: Determine current phase of a draft transaction ---
+const determineCurrentPhase = (transaction, itemCount, docCount) => {
+  // Phase labels matching frontend STEPS
+  const PHASES = {
+    INIT: 'Inisialisasi',
+    METADATA: 'Metadata',
+    DETAIL_ITEM: 'Detail Item',
+    UPLOAD_OCR: 'Upload & OCR',
+    VALIDATION: 'Validasi'
+  };
+
+  // If already submitted or beyond draft status, no phase needed
+  if (!['in_progress', 'draft', 'returned'].includes(transaction.status)) {
+    return null;
+  }
+
+  // Has precheck report -> Validation phase
+  if (transaction.precheck_report) {
+    return PHASES.VALIDATION;
+  }
+
+  // Has documents -> Upload & OCR phase
+  if (docCount > 0) {
+    return PHASES.UPLOAD_OCR;
+  }
+
+  // Has items -> Detail Item phase
+  if (itemCount > 0) {
+    return PHASES.DETAIL_ITEM;
+  }
+
+  // Has header data (recipient_name filled) -> Metadata phase
+  if (transaction.recipient_name) {
+    return PHASES.METADATA;
+  }
+
+  // Just initialized -> Inisialisasi phase
+  return PHASES.INIT;
+};
+
 // --- 1. LIST TRANSACTIONS ---
 router.get(
   '/',
@@ -148,15 +302,27 @@ router.get(
       } = req.query;
 
       /* =========================
-         MAIN QUERY
+         MAIN QUERY - Include item and document counts for phase detection
       ========================= */
       let queryText = `
         SELECT t.*, 
                u.public_alias as submitter_alias,
-               sc.warning_hours, sc.critical_hours
+               sc.warning_hours, sc.critical_hours,
+               COALESCE(item_counts.item_count, 0) as item_count,
+               COALESCE(doc_counts.doc_count, 0) as doc_count
         FROM transactions t
         LEFT JOIN users u ON t.user_id = u.id
         LEFT JOIN sla_configs sc ON t.transaction_type = sc.transaction_type
+        LEFT JOIN (
+          SELECT transaction_id, COUNT(*) as item_count
+          FROM transaction_items
+          GROUP BY transaction_id
+        ) item_counts ON t.id = item_counts.transaction_id
+        LEFT JOIN (
+          SELECT transaction_id, COUNT(*) as doc_count
+          FROM transaction_documents
+          GROUP BY transaction_id
+        ) doc_counts ON t.id = doc_counts.transaction_id
         WHERE t.user_id = $1 AND t.is_latest = true
       `;
 
@@ -226,7 +392,7 @@ router.get(
       const countRes = await query(countQueryText, countParams);
 
       /* =========================
-         RESPONSE
+         RESPONSE - Include currentPhase for draft transactions
       ========================= */
       res.json({
         success: true,
@@ -237,6 +403,7 @@ router.get(
           amount: Number(r.amount),
           currency: r.currency,
           status: r.status,
+          currentPhase: determineCurrentPhase(r, Number(r.item_count), Number(r.doc_count)),
           description: r.description,
           recipientName: r.recipient_name,
           dueDate: r.due_date,

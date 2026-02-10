@@ -210,8 +210,9 @@ export default function DraftPage() {
                       </td>
 
                       <td className="py-4 px-6">
-                        <StatusBadge status={String(draft?.status ?? '')} />
+                        <StatusBadge status={String(draft?.status ?? '')} currentPhase={draft?.currentPhase} />
                       </td>
+
 
                       <td className="py-4 px-6">
                         {hoursLeft !== null ? (
@@ -279,17 +280,36 @@ export default function DraftPage() {
   );
 }
 
-function StatusBadge({ status }) {
+function StatusBadge({ status, currentPhase }) {
   const normalized = String(status ?? '').toLowerCase();
+
+  // If we have currentPhase, use it for draft/in_progress status
+  if (currentPhase && ['in_progress', 'draft'].includes(normalized)) {
+    const phaseClasses = {
+      'Inisialisasi': 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
+      'Metadata': 'bg-purple-500/20 text-purple-400 border border-purple-500/30',
+      'Detail Item': 'bg-amber-500/20 text-amber-400 border border-amber-500/30',
+      'Upload & OCR': 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30',
+      'Validasi': 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
+    };
+
+    return (
+      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${phaseClasses[currentPhase] || 'badge-neutral'}`}>
+        {currentPhase}
+      </span>
+    );
+  }
 
   const classes = {
     in_progress: 'badge-neutral border border-dashed border-dark-400 text-dark-400',
     draft: 'badge-neutral',
+    returned: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
   };
 
   const labels = {
     in_progress: 'Sedang Diedit',
     draft: 'Draft',
+    returned: 'Dikembalikan',
   };
 
   return (
@@ -298,3 +318,4 @@ function StatusBadge({ status }) {
     </span>
   );
 }
+

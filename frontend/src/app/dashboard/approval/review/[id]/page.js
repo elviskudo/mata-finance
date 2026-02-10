@@ -18,6 +18,7 @@ import {
   FileCheck,
   MessageSquare,
   History,
+  RefreshCw,
 } from 'lucide-react';
 import { approvalAPI } from '@/lib/api';
 
@@ -33,8 +34,10 @@ export default function ReviewTransactionPage() {
   const [error, setError] = useState('');
   const [processing, setProcessing] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showClarifyModal, setShowClarifyModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [clarifyReason, setClarifyReason] = useState('');
   const [approvalNotes, setApprovalNotes] = useState('');
 
   useEffect(() => {
@@ -82,7 +85,7 @@ export default function ReviewTransactionPage() {
     }
   };
 
-  const handleReject = async () => {
+  const handleReject = async (rejectionType = 'permanent') => {
     if (rejectReason.length < 10) {
       setError('Alasan penolakan minimal 10 karakter');
       return;
@@ -90,10 +93,13 @@ export default function ReviewTransactionPage() {
 
     try {
       setProcessing(true);
-      const response = await approvalAPI.reject(transactionId, rejectReason);
+      const response = await approvalAPI.reject(transactionId, { 
+        reason: rejectReason, 
+        rejectionType 
+      });
       if (response.data.success) {
         setShowRejectModal(false);
-        router.push('/dashboard/approval/queue?success=rejected');
+        router.push(`/dashboard/approval/queue?success=rejected&type=${rejectionType}`);
       }
     } catch (error) {
       console.error('Reject error:', error);
@@ -104,14 +110,17 @@ export default function ReviewTransactionPage() {
   };
 
   const handleClarify = async () => {
-    const defaultClarify = 'Mohon klarifikasi tujuan pembayaran dan urgensi transaksi ini.';
-    const reason = rejectReason || defaultClarify;
+    if (clarifyReason.length < 10) {
+      setError('Alasan klarifikasi minimal 10 karakter');
+      return;
+    }
     
     try {
       setProcessing(true);
-      const response = await approvalAPI.reject(transactionId, `[Clarification Required] ${reason}`);
+      // Use clarify endpoint - returns to admin for revision
+      const response = await approvalAPI.clarify(transactionId, clarifyReason);
       if (response.data.success) {
-        setShowRejectModal(false);
+        setShowClarifyModal(false);
         router.push('/dashboard/approval/queue?success=clarified');
       }
     } catch (error) {
@@ -434,21 +443,21 @@ export default function ReviewTransactionPage() {
                 </button>
 
                 <button
+                  onClick={() => setShowClarifyModal(true)}
+                  disabled={processing}
+                  className="w-full py-3 flex items-center justify-center gap-2 bg-amber-500/20 text-amber-400 rounded-xl hover:bg-amber-500/30 transition-colors font-medium border border-amber-500/30"
+                >
+                  <MessageSquare className="w-5 h-5" />
+                  Minta Revisi
+                </button>
+
+                <button
                   onClick={() => setShowRejectModal(true)}
                   disabled={processing}
                   className="w-full py-3 flex items-center justify-center gap-2 bg-rose-500/20 text-rose-400 rounded-xl hover:bg-rose-500/30 transition-colors font-medium"
                 >
                   <XCircle className="w-5 h-5" />
-                  Reject & Kembalikan
-                </button>
-
-                <button
-                  onClick={handleClarify}
-                  disabled={processing}
-                  className="w-full py-3 flex items-center justify-center gap-2 bg-blue-500/20 text-blue-400 rounded-xl hover:bg-blue-500/30 transition-colors font-medium border border-blue-500/30"
-                >
-                  <MessageSquare className="w-5 h-5" />
-                  Request Clarification
+                  Tolak Transaksi
                 </button>
               </div>
 
@@ -493,61 +502,151 @@ export default function ReviewTransactionPage() {
         </div>
       </div>
 
-      {/* Reject Modal */}
-      {showRejectModal && (
+      {/* Clarify Modal - Return to Admin for Revision */}
+      {showClarifyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-dark-950/80 backdrop-blur-sm animate-fade-in">
           <div className="glass-card p-6 w-full max-w-md animate-slide-up">
-            <h3 className="text-xl font-bold text-dark-100 mb-4">Tolak Transaksi</h3>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-amber-500/20 rounded-lg">
+                <MessageSquare className="w-5 h-5 text-amber-400" />
+              </div>
+              <h3 className="text-xl font-bold text-dark-100">Minta Revisi</h3>
+            </div>
+            
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl mb-4">
+              <p className="text-sm text-amber-300">
+                <strong>Transaksi akan dikembalikan ke Admin</strong> untuk direvisi dan dapat disubmit ulang setelah diperbaiki.
+              </p>
+            </div>
+
             <p className="text-dark-400 mb-4">
-              Berikan alasan penolakan yang jelas agar pengaju dapat memperbaiki transaksi.
+              Jelaskan apa yang perlu diperbaiki atau diklarifikasi.
             </p>
             
-            {(isEmergencyContext || transaction?.emergency_id) && (
-              <div className="flex flex-wrap gap-2 mb-4">
-                <button 
-                  onClick={() => setRejectReason('Dokumen pendukung tidak lengkap/buram. Mohon upload ulang.')}
-                  className="text-[10px] bg-dark-800 hover:bg-dark-700 text-dark-300 px-2 py-1 rounded border border-dark-700"
-                >
-                  Template: Dokumen Kurang
-                </button>
-                <button 
-                  onClick={() => setRejectReason('Nominal transaksi tidak sesuai dengan invoice terlampir.')}
-                  className="text-[10px] bg-dark-800 hover:bg-dark-700 text-dark-300 px-2 py-1 rounded border border-dark-700"
-                >
-                  Template: Nominal Beda
-                </button>
-                <button 
-                  onClick={() => setRejectReason('Mohon klarifikasi tujuan pembayaran dan urgensi transaksi ini.')}
-                  className="text-[10px] bg-dark-800 hover:bg-dark-700 text-dark-300 px-2 py-1 rounded border border-dark-700"
-                >
-                  Template: Klarifikasi
-                </button>
-              </div>
-            )}
+            <div className="flex flex-wrap gap-2 mb-4">
+              <button 
+                onClick={() => setClarifyReason('Dokumen pendukung tidak lengkap/buram. Mohon upload ulang.')}
+                className="text-[10px] bg-dark-800 hover:bg-dark-700 text-dark-300 px-2 py-1 rounded border border-dark-700"
+              >
+                Template: Dokumen Kurang
+              </button>
+              <button 
+                onClick={() => setClarifyReason('Nominal transaksi tidak sesuai dengan invoice terlampir.')}
+                className="text-[10px] bg-dark-800 hover:bg-dark-700 text-dark-300 px-2 py-1 rounded border border-dark-700"
+              >
+                Template: Nominal Beda
+              </button>
+              <button 
+                onClick={() => setClarifyReason('Mohon jelaskan tujuan pembayaran dan urgensi transaksi ini.')}
+                className="text-[10px] bg-dark-800 hover:bg-dark-700 text-dark-300 px-2 py-1 rounded border border-dark-700"
+              >
+                Template: Butuh Penjelasan
+              </button>
+            </div>
 
             <textarea
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="Alasan penolakan (minimal 10 karakter)..."
+              value={clarifyReason}
+              onChange={(e) => setClarifyReason(e.target.value)}
+              placeholder="Jelaskan apa yang perlu diperbaiki (minimal 10 karakter)..."
               className="input-field w-full h-32 resize-none mb-4"
               autoFocus
             />
 
             <div className="flex gap-3">
               <button
-                onClick={() => setShowRejectModal(false)}
+                onClick={() => setShowClarifyModal(false)}
                 className="flex-1 btn-ghost"
               >
                 Batal
               </button>
               <button
-                onClick={handleReject}
-                disabled={processing || rejectReason.length < 10}
-                className="flex-1 py-3 bg-rose-500 text-white rounded-xl hover:bg-rose-400 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleClarify}
+                disabled={processing || clarifyReason.length < 10}
+                className="flex-1 py-3 bg-amber-500 text-white rounded-xl hover:bg-amber-400 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {processing ? 'Memproses...' : 'Konfirmasi Reject'}
+                {processing ? 'Memproses...' : 'Kirim Permintaan Revisi'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Modal - Permanent Rejection */}
+      {showRejectModal && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-dark-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="glass-card p-6 w-full max-w-lg animate-slide-up shadow-2xl shadow-rose-500/10 border-rose-500/20">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-rose-500/20 rounded-lg">
+                <XCircle className="w-5 h-5 text-rose-400" />
+              </div>
+              <h3 className="text-xl font-bold text-dark-100">Tolak Transaksi</h3>
+            </div>
+            
+            <p className="text-dark-400 mb-4">
+              Berikan alasan penolakan yang jelas. Admin akan menerima notifikasi sesuai opsi yang Anda pilih.
+            </p>
+            
+            <div className="flex flex-wrap gap-2 mb-4">
+              <button 
+                onClick={() => setRejectReason('Transaksi tidak sesuai kebijakan perusahaan.')}
+                className="text-[10px] bg-dark-800 hover:bg-dark-700 text-dark-300 px-2 py-1 rounded border border-dark-700 transition-colors"
+              >
+                Template: Kebijakan
+              </button>
+              <button 
+                onClick={() => setRejectReason('Transaksi duplikat atau sudah pernah diproses.')}
+                className="text-[10px] bg-dark-800 hover:bg-dark-700 text-dark-300 px-2 py-1 rounded border border-dark-700 transition-colors"
+              >
+                Template: Duplikat
+              </button>
+              <button 
+                onClick={() => setRejectReason('Dokumen tidak valid atau terindikasi manipulasi.')}
+                className="text-[10px] bg-dark-800 hover:bg-dark-700 text-dark-300 px-2 py-1 rounded border border-dark-700 transition-colors"
+              >
+                Template: Dokumen Tidak Valid
+              </button>
+            </div>
+
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Alasan penolakan (minimal 10 karakter)..."
+              className="input-field w-full h-32 resize-none mb-6 border-rose-500/20 focus:border-rose-500/50"
+              autoFocus
+            />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <button
+                onClick={() => handleReject('request_new')}
+                disabled={processing || rejectReason.length < 10}
+                className="flex flex-col items-center justify-center p-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-xl transition-all group disabled:opacity-50"
+              >
+                <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                  <RefreshCw className="w-5 h-5 text-amber-400" />
+                </div>
+                <span className="text-sm font-bold text-amber-400">Reject & Buat Baru</span>
+                <span className="text-[10px] text-amber-500/70 text-center mt-1">Admin disuruh buat transaksi baru yang serupa</span>
+              </button>
+
+              <button
+                onClick={() => handleReject('permanent')}
+                disabled={processing || rejectReason.length < 10}
+                className="flex flex-col items-center justify-center p-4 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-xl transition-all group disabled:opacity-50"
+              >
+                <div className="w-10 h-10 rounded-full bg-rose-500/20 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+                  <XCircle className="w-5 h-5 text-rose-400" />
+                </div>
+                <span className="text-sm font-bold text-rose-400">Reject & Tutup</span>
+                <span className="text-[10px] text-rose-500/70 text-center mt-1">Transaksi di-reject & tidak perlu buat baru</span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setShowRejectModal(false)}
+              className="w-full mt-4 py-2 text-dark-500 hover:text-dark-300 text-sm transition-colors"
+            >
+              Batal
+            </button>
           </div>
         </div>
       )}

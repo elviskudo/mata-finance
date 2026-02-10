@@ -20,6 +20,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { transactionAPI } from '@/lib/api';
+import { useAlertModal } from '@/components/AlertModal';
 
 const STEPS = [
   { id: 0, title: 'Entry Hub', icon: FileText },
@@ -33,6 +34,7 @@ const STEPS = [
 export default function NewTransactionPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const alertModal = useAlertModal();
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(true); // Loading initial data
   const [txId, setTxId] = useState(null);
@@ -59,16 +61,41 @@ export default function NewTransactionPage() {
   const [countdown, setCountdown] = useState(null);
   const [isEmergency, setIsEmergency] = useState(false);
   const [emergencyReason, setEmergencyReason] = useState('');
+  const [isReplacementMode, setIsReplacementMode] = useState(false); // Track if this is a replacement for rejected transaction
+  const [originalRejectedId, setOriginalRejectedId] = useState(null); // Track original rejected transaction
 
   // --- INITIAL LOAD ---
   useEffect(() => {
     const id = searchParams.get('id');
+    const replacementMode = searchParams.get('replacementMode') === 'true';
+    
+    if (replacementMode) {
+      setIsReplacementMode(true);
+    }
+    
     if (id) {
       loadTransaction(id);
     } else {
       loadEntryHub();
     }
   }, [searchParams]);
+
+  // --- PREVENT NAVIGATION IN REPLACEMENT MODE ---
+  useEffect(() => {
+    if (!isReplacementMode) return;
+
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = 'Anda sedang dalam mode penggantian transaksi. Yakin ingin keluar tanpa menyelesaikan?';
+      return e.returnValue;
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isReplacementMode]);
 
   const loadEntryHub = async () => {
     try {
@@ -78,7 +105,7 @@ export default function NewTransactionPage() {
       setCurrentStep(0);
     } catch (err) {
       console.error(err);
-      alert('Gagal memuat Entry Hub');
+      alertModal.error('Gagal memuat Entry Hub');
       router.push('/dashboard/admin/transactions');
     } finally {
       setLoading(false);
@@ -182,7 +209,7 @@ export default function NewTransactionPage() {
     setCurrentStep(step); // ✅ SEKALI SAJA
   } catch (err) {
     console.error(err);
-    alert('Gagal memuat transaksi');
+    alertModal.error('Gagal memuat transaksi');
     router.push('/dashboard/admin/transactions');
   } finally {
     setLoading(false);
@@ -203,7 +230,7 @@ export default function NewTransactionPage() {
       setCurrentStep(2);
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.message || 'Gagal inisialisasi transaksi');
+      alertModal.error(err.response?.data?.message || 'Gagal inisialisasi transaksi');
     } finally {
       setLoading(false);
     }
@@ -216,17 +243,17 @@ export default function NewTransactionPage() {
     if (schema) {
       const required = schema.requiredFields || [];
       if (required.includes('vendorName') && !headerData.vendorName) {
-        return alert('Nama vendor wajib diisi');
+        return alertModal.warning('Nama vendor wajib diisi');
       }
       if (required.includes('amount') && !headerData.amount) {
-        return alert('Jumlah wajib diisi');
+        return alertModal.warning('Jumlah wajib diisi');
       }
       if (required.includes('costCenter') && !headerData.costCenter) {
-        return alert('Cost center wajib diisi');
+        return alertModal.warning('Cost center wajib diisi');
       }
     } else {
       if (!headerData.vendorName || !headerData.amount) {
-        return alert('Data wajib belum diisi');
+        return alertModal.warning('Data wajib belum diisi');
       }
     }
 
@@ -240,7 +267,7 @@ export default function NewTransactionPage() {
       setCurrentStep(3);
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.message || 'Gagal simpan header');
+      alertModal.error(err.response?.data?.message || 'Gagal simpan header');
     } finally {
       setLoading(false);
     }
@@ -251,11 +278,11 @@ export default function NewTransactionPage() {
   const handleItemsSave = async () => {
     // Basic validation
     if (items.some((i) => !i.description || i.price < 0 || i.quantity <= 0))
-      return alert('Lengkapi data item (Deskripsi wajib, Harga min 0, Quantity > 0)');
+      return alertModal.warning('Lengkapi data item (Deskripsi wajib, Harga min 0, Quantity > 0)');
     // Validate account code format: code-department-category
     const accountCodeRegex = /^\d+-[^-]+-[^-]+$/;
     if (items.some((i) => i.accountCode && !accountCodeRegex.test(i.accountCode)))
-      return alert('Format Kode Akun harus: code-department-category (contoh: 101-IT-Hardware)');
+      return alertModal.warning('Format Kode Akun harus: code-department-category (contoh: 101-IT-Hardware)');
     setLoading(true);
     try {
       const res = await transactionAPI.addItems(txId, items);
@@ -266,7 +293,7 @@ export default function NewTransactionPage() {
       setCurrentStep(4); // To Upload
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.message || 'Gagal simpan items');
+      alertModal.error(err.response?.data?.message || 'Gagal simpan items');
     } finally {
       setLoading(false);
     }
@@ -287,7 +314,7 @@ export default function NewTransactionPage() {
     } catch (err) {
       console.error(err);
       const msg = err.response?.data?.message || err.message || 'Gagal upload dokumen';
-      alert(`Error Upload/OCR: ${msg}`);
+      alertModal.error(`Error Upload/OCR: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -310,7 +337,7 @@ export default function NewTransactionPage() {
 
   const handleSubmit = async () => {
     if (isEmergency && !emergencyReason.trim()) {
-      return alert('Alasan emergency wajib diisi jika mode emergency aktif');
+      return alertModal.warning('Alasan emergency wajib diisi jika mode emergency aktif');
     }
     setLoading(true);
     try {
@@ -319,14 +346,18 @@ export default function NewTransactionPage() {
         isEmergency,
         emergencyReason
       });
+      
+      // Clear replacement mode to allow navigation
+      setIsReplacementMode(false);
+      
       // Show success message with locked status
       if (res.data.data?.locked) {
-        alert('Transaksi berhasil disubmit dan terkunci. Status: ' + res.data.data.message);
+        alertModal.success('Transaksi berhasil disubmit dan terkunci. Status: ' + res.data.data.message);
       }
       router.push('/dashboard/admin/transactions'); // Back to list
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.message || 'Gagal submit transaksi');
+      alertModal.error(err.response?.data?.message || 'Gagal submit transaksi');
     } finally {
       setLoading(false);
     }
@@ -1041,7 +1072,7 @@ export default function NewTransactionPage() {
                   items: items,
                 };
                 await transactionAPI.saveRevision(txId, changes);
-                alert('Revisi tersimpan');
+                alertModal.success('Revisi tersimpan');
               }}
               disabled={loading}
               className="btn-secondary flex-1"
@@ -1051,7 +1082,7 @@ export default function NewTransactionPage() {
             <button
               onClick={async () => {
                 if (isEmergency && !emergencyReason.trim()) {
-                  return alert('Alasan emergency wajib diisi jika mode emergency aktif');
+                  return alertModal.warning('Alasan emergency wajib diisi jika mode emergency aktif');
                 }
                 const notes = submitNotes || 'Resubmitted after revision';
                 await transactionAPI.resubmit(txId, {
@@ -1059,7 +1090,7 @@ export default function NewTransactionPage() {
                   isEmergency,
                   emergencyReason
                 });
-                alert('Transaksi dikirim ulang untuk approval');
+                alertModal.success('Transaksi dikirim ulang untuk approval');
                 router.push('/dashboard/admin/transactions');
               }}
               disabled={loading}
@@ -1076,11 +1107,11 @@ export default function NewTransactionPage() {
                 setLoading(true);
                 try {
                   await transactionAPI.saveDraft(txId);
-                  alert('Draft berhasil disimpan');
+                  alertModal.success('Draft berhasil disimpan');
                   router.push('/dashboard/admin/transactions');
                 } catch (err) {
                   console.error(err);
-                  alert(err.response?.data?.message || 'Gagal menyimpan draft');
+                  alertModal.error(err.response?.data?.message || 'Gagal menyimpan draft');
                 } finally {
                   setLoading(false);
                 }
@@ -1119,20 +1150,59 @@ export default function NewTransactionPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-20">
+      {/* Replacement Mode Warning Banner */}
+      {isReplacementMode && (
+        <div className="glass-card p-4 border-2 border-rose-500/50 bg-rose-500/5 animate-pulse">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-rose-500/20 rounded-lg shrink-0">
+              <ShieldAlert className="w-5 h-5 text-rose-400" />
+            </div>
+            <div className="flex-1">
+              <h4 className="font-black text-rose-400 text-sm uppercase tracking-wider mb-1">
+                Mode Penggantian Transaksi Ditolak
+              </h4>
+              <p className="text-sm text-dark-200 leading-relaxed">
+                Anda sedang membuat transaksi pengganti untuk transaksi yang ditolak. 
+                <strong className="text-rose-300"> Anda tidak dapat keluar dari halaman ini sampai menyelesaikan semua step dan mengirim ke approval.</strong>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header Back */}
       <div className="flex items-center gap-4">
-        <button
-          onClick={() => router.back()}
-          className="p-2 hover:bg-dark-800 rounded-full text-dark-400"
-        >
-          <ArrowLeft className="w-6 h-6" />
-        </button>
+        {isReplacementMode ? (
+          <div 
+            className="p-2 bg-dark-800/50 rounded-full text-dark-600 cursor-not-allowed opacity-50" 
+            title="Tidak dapat kembali saat mode penggantian transaksi"
+          >
+            <ArrowLeft className="w-6 h-6" />
+          </div>
+        ) : (
+          <button
+            onClick={() => router.back()}
+            className="p-2 hover:bg-dark-800 rounded-full text-dark-400"
+          >
+            <ArrowLeft className="w-6 h-6" />
+          </button>
+        )}
         <div>
           <h1 className="text-2xl font-bold text-dark-100">
-            {status === 'returned' ? 'Revisi Transaksi' : currentStep === 0 ? 'Input Transaksi' : 'Input Transaksi Baru'}
+            {isReplacementMode 
+              ? '🔄 Buat Transaksi Pengganti' 
+              : status === 'returned' 
+                ? 'Revisi Transaksi' 
+                : currentStep === 0 
+                  ? 'Input Transaksi' 
+                  : 'Input Transaksi Baru'}
           </h1>
           <p className="text-dark-400">
-            {status === 'returned' ? 'Perbaiki dan kirim ulang transaksi yang dikembalikan' : 'Entry Hub & Validation'}
+            {isReplacementMode
+              ? 'Lengkapi semua step untuk menggantikan transaksi yang ditolak'
+              : status === 'returned' 
+                ? 'Perbaiki dan kirim ulang transaksi yang dikembalikan' 
+                : 'Entry Hub & Validation'}
           </p>
         </div>
       </div>
@@ -1140,7 +1210,9 @@ export default function NewTransactionPage() {
       {/* Stepper */}
       {currentStep !== 0 && (
         <div className="flex justify-between relative">
-          <div className="absolute top-1/2 left-0 w-full h-1 bg-dark-800 -z-10 -translate-y-1/2 rounded" />
+          <div className={`absolute top-1/2 left-0 w-full h-1 -z-10 -translate-y-1/2 rounded ${
+            isReplacementMode ? 'bg-rose-800' : 'bg-dark-800'
+          }`} />
           {STEPS.map((step) => {
           const Icon = step.icon;
           const isActive = currentStep === step.id;
@@ -1156,9 +1228,13 @@ export default function NewTransactionPage() {
                 w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all
                 ${
                   isActive
-                    ? 'border-primary-500 bg-dark-900 text-primary-400 shadow-[0_0_15px_-3px_rgba(59,130,246,0.3)]'
+                    ? isReplacementMode 
+                      ? 'border-rose-500 bg-dark-900 text-rose-400 shadow-[0_0_15px_-3px_rgba(244,63,94,0.3)]'
+                      : 'border-primary-500 bg-dark-900 text-primary-400 shadow-[0_0_15px_-3px_rgba(59,130,246,0.3)]'
                     : isCompleted
-                      ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400'
+                      ? isReplacementMode
+                        ? 'border-rose-500 bg-rose-500/10 text-rose-400'
+                        : 'border-emerald-500 bg-emerald-500/10 text-emerald-400'
                       : 'border-dark-700 bg-dark-900 text-dark-600'
                 }
               `}
@@ -1166,7 +1242,11 @@ export default function NewTransactionPage() {
                 {isCompleted ? <CheckCircle2 className="w-6 h-6" /> : <Icon className="w-5 h-5" />}
               </div>
               <span
-                className={`text-xs font-medium whitespace-nowrap ${isActive ? 'text-primary-400' : 'text-dark-500'}`}
+                className={`text-xs font-medium whitespace-nowrap ${
+                  isActive 
+                    ? isReplacementMode ? 'text-rose-400' : 'text-primary-400' 
+                    : 'text-dark-500'
+                }`}
               >
                 {step.title}
               </span>

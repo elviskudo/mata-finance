@@ -304,13 +304,122 @@ router.post('/transactions/:id/approve', authenticateToken, authorizeRoles('appr
  * @swagger
  * /api/approval/transactions/{id}/reject:
  *   post:
- *     summary: Reject/Return a Transaction for Revision
+ *     summary: Permanently Reject a Transaction
  *     description: |
- *       Rejects a transaction and returns it to admin for revision.
- *       Status changes to 'returned' so it appears in admin's revision menu.
+ *       Permanently rejects a transaction. Admin will be notified that transaction 
+ *       is rejected and must create a new transaction from scratch.
+ *       Status changes to 'rejected' (final state, cannot be revised).
  *     tags: [Approval]
  */
 router.post('/transactions/:id/reject', authenticateToken, authorizeRoles('approval'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason, rejectionType = 'permanent' } = req.body;
+    const approvalId = req.user.id;
+
+    if (!reason || reason.trim().length < 10) {
+      return res.status(400).json({
+        success: false,
+        message: 'Rejection reason is required (minimum 10 characters)'
+      });
+    }
+
+    // Update transaction status to 'rejected'
+    const result = await query(`
+      UPDATE transactions 
+      SET status = 'rejected', 
+          reject_reason = $2,
+          reviewed_at = CURRENT_TIMESTAMP,
+          internal_flags = jsonb_set(
+            jsonb_set(
+              jsonb_set(COALESCE(internal_flags, '{}'), '{locked}', 'true'),
+              '{rejection_type}', $3
+            ),
+            '{replacement_status}', $4
+          ),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1 AND status IN ('submitted', 'resubmitted')
+      RETURNING *
+    `, [id, reason, `"${rejectionType}"`, rejectionType === 'request_new' ? '"pending"' : '"none"']);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction not found or already processed'
+      });
+    }
+
+    const transaction = result.rows[0];
+
+    // Notification details based on rejection type
+    let alertTitle, alertMessage, severity;
+    if (rejectionType === 'request_new') {
+      alertTitle = `Transaksi ${transaction.transaction_code} Ditolak (Mohon Buat Baru)`;
+      alertMessage = `Transaksi Anda ditolak. Alasan: ${reason}. Silakan buat transaksi baru yang serupa sebagai pengganti.`;
+      severity = 'warning';
+    } else {
+      alertTitle = `Transaksi ${transaction.transaction_code} DITOLAK PERMANEN`;
+      alertMessage = `Transaksi Anda ditolak permanen. Alasan: ${reason}. Penolakan ini bersifat final dan tidak boleh dibuat baru lagi.`;
+      severity = 'danger';
+    }
+
+    // Create alert for admin
+    try {
+      await query(`
+        INSERT INTO personal_alerts (id, user_id, alert_type, severity, title, message, related_entity_type, related_entity_id, created_at)
+        VALUES ($1, $2, 'REJECTED', $3, $4, $5, 'transaction', $6, CURRENT_TIMESTAMP)
+      `, [
+        uuidv4(),
+        transaction.user_id,
+        severity,
+        alertTitle,
+        alertMessage,
+        transaction.id
+      ]);
+    } catch (alertError) {
+      console.error('Failed to create alert:', alertError);
+    }
+
+    // Log activity
+    auditService.logActivity(approvalId, 'REJECT', 'transaction', id, {
+      reason,
+      rejectionType,
+      previousStatus: transaction.status,
+      newStatus: 'rejected',
+      transactionCode: transaction.transaction_code,
+      message: rejectionType === 'request_new' 
+        ? `Ditolak dengan permintaan buat baru: ${reason}` 
+        : `Ditolak permanen: ${reason}`
+    });
+
+    res.json({
+      success: true,
+      message: rejectionType === 'request_new' 
+        ? 'Transaction rejected with request for new submission' 
+        : 'Transaction rejected permanently',
+      data: transaction
+    });
+  } catch (error) {
+    console.error('Reject error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reject transaction'
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/approval/transactions/{id}/clarify:
+ *   post:
+ *     summary: Request Clarification / Return for Revision
+ *     description: |
+ *       Returns a transaction to admin for revision/clarification.
+ *       Status changes to 'returned' so it appears in admin's revision menu.
+ *       Admin can edit and resubmit the transaction.
+ *     tags: [Approval]
+ */
+router.post('/transactions/:id/clarify', authenticateToken, authorizeRoles('approval'), async (req, res) => {
   try {
     const { id } = req.params;
     const { reason } = req.body;
@@ -319,7 +428,7 @@ router.post('/transactions/:id/reject', authenticateToken, authorizeRoles('appro
     if (!reason || reason.trim().length < 10) {
       return res.status(400).json({
         success: false,
-        message: 'Rejection reason is required (minimum 10 characters)'
+        message: 'Clarification reason is required (minimum 10 characters)'
       });
     }
 
@@ -345,42 +454,41 @@ router.post('/transactions/:id/reject', authenticateToken, authorizeRoles('appro
 
     const transaction = result.rows[0];
 
-    // Create alert for admin who submitted this transaction
+    // Create alert for admin - REVISION REQUIRED (can be edited)
     try {
       await query(`
         INSERT INTO personal_alerts (id, user_id, alert_type, severity, title, message, related_entity_type, related_entity_id, created_at)
-        VALUES ($1, $2, 'REVISION_REQUIRED', 'warning', $3, $4, 'transaction', $5, CURRENT_TIMESTAMP)
+        VALUES ($1, $2, 'CLARIFICATION_REQUIRED', 'warning', $3, $4, 'transaction', $5, CURRENT_TIMESTAMP)
       `, [
         uuidv4(),
         transaction.user_id,
-        `Transaksi ${transaction.transaction_code} perlu direvisi`,
-        `Alasan: ${reason}`,
+        `Transaksi ${transaction.transaction_code} perlu klarifikasi`,
+        `Transaksi Anda dikembalikan untuk klarifikasi/revisi. Silakan periksa dan submit ulang.\n\nCatatan: ${reason}`,
         transaction.id
       ]);
     } catch (alertError) {
       console.error('Failed to create alert:', alertError);
-      // Don't fail the main operation if alert creation fails
     }
 
-    // Log activity dengan entity_type='transaction' agar muncul di timeline admin
-    auditService.logActivity(approvalId, 'REJECT', 'transaction', id, {
+    // Log activity
+    auditService.logActivity(approvalId, 'CLARIFY', 'transaction', id, {
       reason,
       previousStatus: transaction.status,
       newStatus: 'returned',
       transactionCode: transaction.transaction_code,
-      message: `Dikembalikan untuk revisi: ${reason}`
+      message: `Dikembalikan untuk klarifikasi: ${reason}`
     });
 
     res.json({
       success: true,
-      message: 'Transaction returned for revision',
+      message: 'Transaction returned for clarification',
       data: transaction
     });
   } catch (error) {
-    console.error('Reject error:', error);
+    console.error('Clarify error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to reject transaction'
+      message: 'Failed to request clarification'
     });
   }
 });

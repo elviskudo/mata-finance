@@ -4,9 +4,11 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Activity, AlertOctagon, RefreshCcw, ArrowRight, Loader2, CheckCircle, XCircle, Save, Edit } from 'lucide-react';
 import { exceptionAPI, helpAPI } from '@/lib/api';
+import { useAlertModal } from '@/components/AlertModal';
 
 export default function MyExceptionsPage() {
   const router = useRouter();
+  const alertModal = useAlertModal();
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCase, setSelectedCase] = useState(null);
@@ -66,7 +68,7 @@ export default function MyExceptionsPage() {
       const response = await exceptionAPI.recheck(selectedCase.id);
       if (response?.data?.success) {
         if (response.data.data.match) {
-          alert('Berhasil! Transaksi telah divalidasi dengan patch dan dikirim ke Approval.');
+          alertModal.success('Berhasil! Transaksi telah divalidasi dengan patch dan dikirim ke Approval.');
           if (response.data.data.redirect) {
             router.push(response.data.data.redirect);
           } else {
@@ -79,12 +81,12 @@ export default function MyExceptionsPage() {
             ...prev,
             mismatch_summary: response.data.data.summary
           }));
-          alert('Validasi ulang masih menemukan selisih: ' + response.data.data.summary);
+          alertModal.warning('Validasi ulang masih menemukan selisih: ' + response.data.data.summary);
         }
       }
     } catch (error) {
       console.error('Error rechecking:', error);
-      alert('Gagal melakukan validasi ulang: ' + (error.response?.data?.message || error.message));
+      alertModal.error('Gagal melakukan validasi ulang: ' + (error.response?.data?.message || error.message));
     } finally {
       setRecheckLoading(false);
     }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import {
   Home,
   FileText,
@@ -20,17 +20,26 @@ import {
   Send,
   Clock,
   ShieldAlert,
+  Info,
+  History,
+  Lock,
 } from 'lucide-react';
 import { alertAPI } from '@/lib/api';
+import { AlertModalProvider } from '@/components/AlertModal';
+import RejectionNotices from '@/components/RejectionNotices';
 
 export default function DashboardLayout({ children }) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const [user, setUser] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
+  
+  // Detect replacement mode from URL
+  const isReplacementMode = searchParams.get('replacementMode') === 'true';
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -78,6 +87,8 @@ export default function DashboardLayout({ children }) {
 
   const allNavItems = [
     { href: homePath, icon: Home, label: 'Home' },
+    { href: '/dashboard/approval/notices', icon: Info, label: 'System Notices', roles: ['approval'] },
+    { href: '/dashboard/approval/decisions', icon: History, label: 'My Decisions', roles: ['approval'] },
     { href: '/dashboard/approval/emergency', icon: ShieldAlert, label: 'Emergency Requests', roles: ['approval'] },
     { href: '/dashboard/approval/queue', icon: FileText, label: 'Antrian Approval', roles: ['approval'] },
     { href: '/dashboard/admin/transactions/new', icon: PlusCircle, label: 'Input Transaksi', roles: ['admin_finance'] },
@@ -102,6 +113,8 @@ export default function DashboardLayout({ children }) {
     if (pathname === '/dashboard') return 'Home';
     if (pathname === '/dashboard/admin') return 'Admin Finance Dashboard';
     if (pathname === '/dashboard/approval') return 'Approval Dashboard';
+    if (pathname === '/dashboard/approval/notices') return 'System Notices';
+    if (pathname === '/dashboard/approval/decisions') return 'My Decisions';
     if (pathname === '/dashboard/approval/emergency') return 'Emergency Requests';
     if (pathname === '/dashboard/approval/queue') return 'Antrian Approval';
     if (pathname.startsWith('/dashboard/approval/review')) return 'Review Transaksi';
@@ -129,6 +142,10 @@ export default function DashboardLayout({ children }) {
   }
 
   return (
+    <AlertModalProvider>
+    {/* Global Rejection Alerts for Admin - Hidden in replacement mode to keep focus */}
+    {role === 'admin_finance' && !isReplacementMode && <RejectionNotices />}
+
     <div className="h-screen flex overflow-hidden">
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
@@ -160,11 +177,51 @@ export default function DashboardLayout({ children }) {
             </div>
           </div>
 
+          {/* Replacement Mode Warning Banner */}
+          {isReplacementMode && (
+            <div className="mx-4 mt-4 p-3 bg-rose-500/10 border-2 border-rose-500/50 rounded-xl animate-pulse">
+              <div className="flex items-start gap-2">
+                <Lock className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-black text-rose-400 uppercase tracking-wider mb-1">
+                    Mode Terkunci
+                  </p>
+                  <p className="text-[10px] text-rose-300 leading-relaxed">
+                    Semua menu dinonaktifkan. Selesaikan transaksi pengganti untuk membuka akses.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Navigation - Scrollable jika menu terlalu banyak */}
           <nav className="flex-1 p-4 space-y-2 overflow-y-auto overflow-x-hidden">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
+              const isDisabled = isReplacementMode; 
+
+              // If in replacement mode, disable all navigation links to keep focus
+              if (isDisabled) {
+                return (
+                  <div
+                    key={item.href}
+                    className="relative group"
+                    title="Menu tidak tersedia - selesaikan transaksi pengganti terlebih dahulu"
+                  >
+                    <div className="nav-link opacity-40 cursor-not-allowed bg-dark-800/30">
+                      <Icon className="w-5 h-5" />
+                      <span className="flex-1">{item.label}</span>
+                      <Lock className="w-4 h-4 text-rose-400" />
+                    </div>
+                    {/* Tooltip on hover */}
+                    <div className="absolute left-0 top-full mt-2 w-64 p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg text-xs text-rose-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                      <p className="font-bold mb-1">🔒 Menu Terkunci</p>
+                      <p>Anda sedang dalam mode penggantian transaksi. Selesaikan proses penggantian terlebih dahulu.</p>
+                    </div>
+                  </div>
+                );
+              }
 
               return (
                 <Link
@@ -223,26 +280,45 @@ export default function DashboardLayout({ children }) {
             {/* Right Section */}
             <div className="flex items-center gap-4">
               {/* Alerts Button */}
-              <Link
-                href="/dashboard/alerts"
-                className="relative p-2 text-dark-400 hover:text-primary-400 rounded-lg hover:bg-primary-500/10 transition-colors"
-              >
-                <Bell className="w-5 h-5" />
-                {alertCount > 0 && (
-                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white text-xs font-medium rounded-full flex items-center justify-center">
-                    {alertCount > 9 ? '9+' : alertCount}
-                  </span>
-                )}
-              </Link>
+              {isReplacementMode ? (
+                <div 
+                  className="relative p-2 text-dark-600 rounded-lg cursor-not-allowed opacity-50"
+                  title="Notifikasi tidak tersedia saat mode penggantian transaksi"
+                >
+                  <Bell className="w-5 h-5" />
+                  <Lock className="w-3 h-3 absolute -top-0.5 -right-0.5 text-rose-400" />
+                </div>
+              ) : (
+                <Link
+                  href="/dashboard/alerts"
+                  className="relative p-2 text-dark-400 hover:text-primary-400 rounded-lg hover:bg-primary-500/10 transition-colors"
+                >
+                  <Bell className="w-5 h-5" />
+                  {alertCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white text-xs font-medium rounded-full flex items-center justify-center">
+                      {alertCount > 9 ? '9+' : alertCount}
+                    </span>
+                  )}
+                </Link>
+              )}
 
               {/* User Menu */}
               <div className="relative z-40">
                 <button
-                  onClick={() => setUserMenuOpen((v) => !v)}
-                  className="flex items-center gap-2 p-2 rounded-lg hover:bg-dark-800 transition-colors"
+                  onClick={() => !isReplacementMode && setUserMenuOpen((v) => !v)}
+                  className={`flex items-center gap-2 p-2 rounded-lg transition-colors ${
+                    isReplacementMode 
+                      ? 'cursor-not-allowed opacity-50' 
+                      : 'hover:bg-dark-800'
+                  }`}
+                  disabled={isReplacementMode}
+                  title={isReplacementMode ? 'Menu user tidak tersedia saat mode penggantian' : ''}
                 >
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center relative">
                     <User className="w-4 h-4 text-white" />
+                    {isReplacementMode && (
+                      <Lock className="w-3 h-3 absolute -top-0.5 -right-0.5 text-rose-400" />
+                    )}
                   </div>
                   <ChevronDown
                     className={`w-4 h-4 text-dark-400 transition-transform ${
@@ -252,7 +328,7 @@ export default function DashboardLayout({ children }) {
                 </button>
 
                 {/* Dropdown Menu */}
-                {userMenuOpen && (
+                {userMenuOpen && !isReplacementMode && (
                   <div className="absolute right-0 mt-2 w-56 glass-card py-2 shadow-xl animate-fade-in">
                     <div className="px-4 py-3 border-b border-dark-700/50">
                       <p className="font-medium text-dark-100">{user?.publicAlias ?? 'Anonymous'}</p>
@@ -284,5 +360,6 @@ export default function DashboardLayout({ children }) {
         <div className="fixed inset-0 z-20" onClick={() => setUserMenuOpen(false)} />
       )}
     </div>
+    </AlertModalProvider>
   );
 }
